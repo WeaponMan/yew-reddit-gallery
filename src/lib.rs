@@ -1,29 +1,30 @@
 #![recursion_limit = "1024"]
 
 mod data;
+mod player;
 
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 use yew::services::{IntervalService, Task};
 use yew::services::fetch::{FetchService, Request, Response, FetchTask};
-use log::{info, error};
+use log::error;
 use std::time::Duration;
 use yew::format::{Nothing, Json};
 use anyhow::Error;
-use std::collections::HashMap;
 use data::*;
+use player::Player;
 
 
 struct Model {
   link: ComponentLink<Self>,
   timeout: u64,
   timeout_enable: bool,
-  pictures: Vec<RedditPicture>,
+  items: Vec<RedditItem>,
   current_index: i32,
   url: String,
   job: Option<Box<dyn Task>>,
   callback_tick: Callback<()>,
-  callback_pictures: Callback<()>,
+  callback_items: Callback<()>,
   loading: bool,
   failed: bool,
   after: Option<String>,
@@ -37,34 +38,34 @@ enum Msg {
   NextPicture,
   Tick,
   PrevPicture,
-  PicturesFailed,
-  PicturesLoaded((Vec<RedditPicture>, String)),
-  LoadPictures,
+  ItemsFailed,
+  ItemsLoaded((Vec<RedditItem>, String)),
+  LoadItems,
 }
 
 const LIMIT: usize = 50;
+
 impl Model {
-  pub fn get_images(&mut self) -> yew::services::fetch::FetchTask {
+  pub fn get_items(&mut self) -> yew::services::fetch::FetchTask {
     let callback = self.link.callback(
       move |response: Response<Json<Result<RedditListings, Error>>>| {
         let (meta, Json(data)) = response.into_parts();
-        info!("META: {:?}, {:?}", meta, data);
         if meta.status.is_success() {
           match data {
             Ok(data) => {
-              if let Some(data) = data.get_images() {
-                Msg::PicturesLoaded(data)
+              if let Some(data) = data.get_items() {
+                Msg::ItemsLoaded(data)
               } else {
-                Msg::PicturesFailed
+                Msg::ItemsFailed
               }
             }
             Err(e) => {
               error!("{}", e);
-              Msg::PicturesFailed
+              Msg::ItemsFailed
             }
           }
         } else {
-          Msg::PicturesFailed
+          Msg::ItemsFailed
         }
       },
     );
@@ -83,9 +84,9 @@ impl Model {
     if self.loading {
       return;
     }
-    let pictures_left = self.pictures.len() - self.current_index as usize;
+    let pictures_left = self.items.len() - self.current_index as usize;
     if LIMIT / 3 > pictures_left {
-      self.callback_pictures.emit(());
+      self.callback_items.emit(());
     }
   }
 }
@@ -98,17 +99,17 @@ impl Component for Model {
     let location = window.location();
     let timeout = 10;
     let handle = IntervalService::spawn(Duration::from_secs(timeout), link.callback(|_| Msg::Tick));
-    link.callback(|_| Msg::LoadPictures).emit(());
+    link.callback(|_| Msg::LoadItems).emit(());
     let initial_vec = Vec::new();
     Self {
       timeout: 10,
       timeout_enable: true,
-      pictures: initial_vec,
+      items: initial_vec,
       current_index: 0,
       url: location.pathname().unwrap(),
       job: Some(Box::new(handle)),
       callback_tick: link.callback(|_| Msg::Tick),
-      callback_pictures: link.callback(|_| Msg::LoadPictures),
+      callback_items: link.callback(|_| Msg::LoadItems),
       link,
       loading: false,
       failed: false,
@@ -142,8 +143,8 @@ impl Component for Model {
       }
       Msg::NextPicture => {
         self.current_index += 1;
-        if self.current_index as usize >= self.pictures.len() {
-          self.current_index = self.pictures.len() as i32 - 1;
+        if self.current_index as usize >= self.items.len() {
+          self.current_index = self.items.len() as i32 - 1;
         }
         self.check_next_load();
 
@@ -167,8 +168,8 @@ impl Component for Model {
         if self.current_index < 0 {
           self.current_index = 0;
         }
-        if self.current_index as usize >= self.pictures.len() {
-          self.current_index = self.pictures.len() as i32 - 1;
+        if self.current_index as usize >= self.items.len() {
+          self.current_index = self.items.len() as i32 - 1;
         }
         self.check_next_load();
 
@@ -182,24 +183,24 @@ impl Component for Model {
         }
 
         self.current_index += 1;
-        if self.current_index as usize >= self.pictures.len() {
-          self.current_index = self.pictures.len() as i32 - 1;
+        if self.current_index as usize >= self.items.len() {
+          self.current_index = self.items.len() as i32 - 1;
         }
         self.check_next_load();
       }
-      Msg::PicturesLoaded((pictures, after)) => {
+      Msg::ItemsLoaded((pictures, after)) => {
         self.loading = false;
         self.after = Some(after);
-        self.pictures.extend(pictures);
+        self.items.extend(pictures);
       }
-      Msg::PicturesFailed => {
+      Msg::ItemsFailed => {
         self.loading = false;
         self.failed = true;
       }
-      Msg::LoadPictures => {
+      Msg::LoadItems => {
         if !self.loading {
           self.loading = true;
-          self.ft = Some(self.get_images());
+          self.ft = Some(self.get_items());
         }
       }
     }
@@ -211,16 +212,39 @@ impl Component for Model {
   }
 
   fn view(&self) -> Html {
-    let view_image = |image: &RedditPicture| {
-      html! {
-          <>
-            <div id="main-title"><a target="_blank" href=format!("{}", &image.title_url)>{ &image.title }</a></div>
-            <img id="main-image" src=format!("{}", &image.url) srcset=format!("{}", image.source_set)  loading="lazy" sizes="100vw" />
-          </>
-       }
+    let view_item = |item: &RedditItem| {
+      match &item.item {
+        RedditItemType::Picture { source_set, url } => {
+          html! {
+              <>
+                <div id="main-title"><a target="_blank" href=format!("{}", &item.title_url)>{ &item.title }</a></div>
+                <img id="main-image" src={ url } srcset={ source_set } loading="lazy" sizes="100vw" />
+              </>
+          }
+        }
+        RedditItemType::Video { url, mime } => {
+          html! {
+              <>
+                <div id="main-title"><a target="_blank" href=format!("{}", &item.title_url)>{ &item.title }</a></div>
+                <Player id="main-video" url={ url } mime={ mime } />
+              </>
+          }
+        }
+        RedditItemType::Embed { url, width, height, scrolling } => {
+          html! {
+              <>
+                <div id="main-title"><a target="_blank" href=format!("{}", &item.title_url)>{ &item.title }</a></div>
+                <div id="main-iframe-center">
+                  <iframe id="main-iframe" src={url} width={width} height={height} scrolling={scrolling} border=0 frameborder=0 allowfullscreen=true
+                   sandbox="allow-forms allow-same-origin allow-scripts allow-top-navigation-by-user-activation allow-popups allow-popups-to-escape-sandbox allow-orientation-lock allow-presentation"></iframe>
+                 </div>
+              </>
+          }
+        }
+      }
     };
 
-    let tool_box_number_view = |item: (usize, &RedditPicture)| {
+    let tool_box_number_view = |item: (usize, &RedditItem)| {
       let index = item.0 as i32;
       if self.current_index == index {
         html! { <li><a class="item-selected" onclick=self.link.callback(move |_| Msg::SetIndex(index))>{ index + 1 }</a></li> }
@@ -228,23 +252,23 @@ impl Component for Model {
         html! { <li><a onclick=self.link.callback(move |_| Msg::SetIndex(index))>{ index + 1 }</a></li> }
       }
     };
-    let image = self.pictures.get(self.current_index as usize);
+    let item = self.items.get(self.current_index as usize);
     html! {
             <div id="main">
                 {
                   if self.loading {
                     html!{ <div class="loader"></div> }
                   } else if self.failed {
-                    html!{ <div>{"Failed to load next index"} <a onclick=self.link.callback(|_| Msg::LoadPictures)>{"Retry"}</a></div> }
+                    html!{ <div>{"Failed to load next index "}<a href="javascript:void(0)" onclick=self.link.callback(|_| Msg::LoadItems)>{"Retry"}</a></div> }
                   } else {
                     html!{ <></> }
                   }
                 }
                 {
-                  if let Some(image) = image.map(view_image) {
-                     image
+                  if let Some(item) = item.map(view_item) {
+                     item
                   } else{
-                    html!{ <div>{"No image"}</div> }
+                    html!{ <></> }
                   }
                 }
                 <div class="prev-button" onclick=self.link.callback(|_| Msg::PrevPicture)></div>
@@ -257,7 +281,7 @@ impl Component for Model {
                     </div>
                     <div class="toolbox-body">
                         <ul>
-                            {for self.pictures.iter().enumerate().map(tool_box_number_view)}
+                            {for self.items.iter().enumerate().map(tool_box_number_view)}
                         </ul>
                     </div>
                 </div>
