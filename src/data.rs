@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use serde::Deserialize;
 
+//TODO: make http backend to this
 
 pub(crate) enum RedditItemType {
   Picture {
@@ -30,17 +31,15 @@ pub(crate) struct RedditListings {
   data: Option<RedditListingsData>,
 }
 
-//TODO: imgur... gifv
-
 fn extract_imgur_gifv_url(url: &str) -> Option<String> {
   use regex::Regex;
   lazy_static! {
-        static ref RE: Regex = Regex::new(r"/((\w+|\d+)).gifv").unwrap();
+      static ref RE: Regex = Regex::new(r"/((\w+|\d+)).gifv").unwrap();
   }
-  for cap in RE.captures_iter(url) {
-    return Some(cap[1].to_string());
-  }
-  return None;
+
+  return RE.captures(url)
+      .and_then(|x| x.get(1))
+      .map(|x| x.as_str().to_string());
 }
 
 fn extract_gfycat_gif_url(url: &str) -> Option<String> {
@@ -48,10 +47,19 @@ fn extract_gfycat_gif_url(url: &str) -> Option<String> {
   lazy_static! {
         static ref RE: Regex = Regex::new(r"^https?://thumbs\.gfycat\.com/(\w+|\d+)-(?:\w+|\d+|_)\.gif$").unwrap();
   }
-  for cap in RE.captures_iter(url) {
-    return Some(cap[1].to_string());
+  return RE.captures(url)
+      .and_then(|x| x.get(1))
+      .map(|x| x.as_str().to_string());
+}
+
+fn extract_src_from_inframe_html(content: &str)  -> Option<String> {
+  use regex::Regex;
+  lazy_static! {
+        static ref RE: Regex = Regex::new("src=\"([^\"]*)\"").unwrap();
   }
-  return None;
+  return RE.captures(content)
+      .and_then(|x| x.get(1))
+      .map(|x| x.as_str().to_string());
 }
 
 
@@ -97,19 +105,19 @@ impl RedditListings {
             }
           }
 
-          if let Some(media_embed) = &child_data.secure_media_embed {
-            if let (Some(media_domain_url), Some(scrolling), Some(width), Some(height))
-            = (&media_embed.media_domain_url, media_embed.scrolling, media_embed.width, media_embed.height) {
+          if let Some(RedditMediaEmbed { scrolling: Some(scrolling), width: Some(width), height: Some(height), content: Some(content) }) = &child_data.secure_media_embed {
+            if let Some(url) = extract_src_from_inframe_html(content) {
               items.push(RedditItem {
                 title: child_data.title.clone(),
                 title_url: format!("https://www.reddit.com/{}", &child_data.permalink),
                 item: RedditItemType::Embed {
-                  url: media_domain_url.replace("&amp;", "&"),
-                  scrolling: if scrolling { "yes".to_string() } else { "no".to_string() },
-                  width,
-                  height,
+                  url: url.replace("&amp;", "&"),
+                  scrolling: if *scrolling { "yes".to_string() } else { "no".to_string() },
+                  width: *width,
+                  height: *height,
                 },
               });
+
               continue;
             }
           }
@@ -220,10 +228,10 @@ pub(crate) struct OEmbed {
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct RedditMediaEmbed {
-  media_domain_url: Option<String>,
   scrolling: Option<bool>,
   width: Option<i32>,
   height: Option<i32>,
+  content: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]

@@ -9,6 +9,7 @@ mod player;
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 use yew::services::{IntervalService, Task};
+use yew::services::storage::{Area, StorageService};
 use yew::services::fetch::{FetchService, Request, Response, FetchTask};
 use log::error;
 use std::time::Duration;
@@ -31,6 +32,7 @@ struct Model {
   failed: bool,
   after: Option<String>,
   ft: Option<FetchTask>,
+  storage: Option<StorageService>,
 }
 
 enum Msg {
@@ -45,6 +47,8 @@ enum Msg {
   LoadItems,
 }
 
+const TIMEOUT_KEY: &str = "TIMEOUT_KEY";
+const TIMEOUT_ENABLED_KEY: &str = "TIMEOUT_ENABLED_KEY";
 const LIMIT: usize = 50;
 
 impl Model {
@@ -116,13 +120,29 @@ impl Component for Model {
   fn create(_: Self::Properties, link: ComponentLink<Self>) -> Self {
     let window: web_sys::Window = web_sys::window().expect("window not available");
     let location = window.location();
-    let timeout = 10;
+    let mut timeout = 10;
+    let mut timeout_enabled = true;
     let handle = IntervalService::spawn(Duration::from_secs(timeout), link.callback(|_| Msg::Tick));
     link.callback(|_| Msg::LoadItems).emit(());
     let initial_vec = Vec::new();
+    let storage = StorageService::new(Area::Local).ok();
+    if let Some(storage) = &storage {
+      if let Ok(timeout_enabled_val) = storage.restore(TIMEOUT_ENABLED_KEY) {
+        if let Ok(timeout_enabled_val) = timeout_enabled_val.parse::<bool>() {
+          timeout_enabled = timeout_enabled_val;
+        }
+      }
+
+      if let Ok(timeout_val) = storage.restore(TIMEOUT_KEY) {
+        if let Ok(timeout_val) = timeout_val.parse::<u64>() {
+          timeout = timeout_val;
+        }
+      }
+    }
+
     Self {
-      timeout: 10,
-      timeout_enable: true,
+      timeout,
+      timeout_enable: timeout_enabled,
       items: initial_vec,
       current_index: 0,
       url: location.pathname().unwrap(),
@@ -134,6 +154,7 @@ impl Component for Model {
       failed: false,
       after: None,
       ft: None,
+      storage,
     }
   }
 
@@ -141,6 +162,9 @@ impl Component for Model {
     match msg {
       Msg::TimeoutToggle => {
         self.timeout_enable = !self.timeout_enable;
+        if let Some(storage) = &mut self.storage {
+          storage.store(TIMEOUT_ENABLED_KEY, Ok(self.timeout_enable.to_string()));
+        }
         self.refresh_interval();
       }
       Msg::TimeoutSet(data) => {
@@ -148,6 +172,9 @@ impl Component for Model {
           if let Ok(timeout) = timeout_str.parse::<u64>() {
             if timeout != self.timeout && timeout > 0 {
               self.timeout = timeout;
+              if let Some(storage) = &mut self.storage {
+                storage.store(TIMEOUT_KEY, Ok(self.timeout.to_string()));
+              }
               self.refresh_interval();
             }
           }
@@ -161,9 +188,7 @@ impl Component for Model {
       }
       Msg::PrevPicture => {
         self.current_index -= 1;
-        if self.current_index < 0 {
-          self.current_index = 0;
-        }
+        self.check_bounds();
         self.check_next_load();
         self.refresh_interval();
       }
@@ -193,6 +218,7 @@ impl Component for Model {
       Msg::LoadItems => {
         if !self.loading {
           self.loading = true;
+          self.ft.take();
           self.ft = Some(self.get_items());
         }
       }
