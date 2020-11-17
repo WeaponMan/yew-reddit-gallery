@@ -9,11 +9,13 @@ edition = "2018"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-yew = { version = "0.17"}
+yew = { version = "0.17" }
 wasm-bindgen = "0.2.67"
-web-sys = "0.3"
+web-sys = { version = "0.3", features = ["Event", "ProgressEvent", "EventTarget", "HtmlVideoElement"] }
 wasm-logger = "0.2.0"
 log = "0.4"
 anyhow = "1.0"
 serde = "1"
 serde_derive = "1"
+regex = "1"
+lazy_static = "1"

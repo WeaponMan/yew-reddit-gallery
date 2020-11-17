@@ -1,5 +1,7 @@
 use yew::{Component, ComponentLink, ShouldRender, Html, Properties};
 use yew::prelude::*;
+use web_sys::HtmlVideoElement;
+use wasm_bindgen::JsCast;
 
 #[derive(Properties, Clone, PartialEq)]
 pub struct PlayerProps {
@@ -10,12 +12,14 @@ pub struct PlayerProps {
 
 pub enum Msg {
   Enable,
+  OnLoad(Event),
 }
 
 pub struct Player {
   props: PlayerProps,
   dirty: bool,
   callback_enable: Callback<()>,
+  link: ComponentLink<Self>,
 }
 
 impl Component for Player {
@@ -26,6 +30,7 @@ impl Component for Player {
       props,
       dirty: false,
       callback_enable: link.callback(|_| Msg::Enable),
+      link,
     }
   }
 
@@ -34,7 +39,14 @@ impl Component for Player {
       Msg::Enable => {
         if self.dirty {
           self.dirty = false;
-          return true
+          return true;
+        }
+      }
+      Msg::OnLoad(event) => {
+        if let Some(target) = event.target() {
+          if let Some(video) = target.dyn_ref::<HtmlVideoElement>() {
+            video.set_muted(true);
+          }
         }
       }
     }
@@ -57,7 +69,7 @@ impl Component for Player {
   fn view(&self) -> Html {
     if !self.dirty {
       html! {
-         <video id={&self.props.id} muted=true autoplay=true loop=true>
+         <video id={&self.props.id} autoplay=true loop=true muted=true onloadeddata=self.link.callback(|x| Msg::OnLoad(x))>
               <source src={ &self.props.url } type={ &self.props.mime } />
          </video>
       }

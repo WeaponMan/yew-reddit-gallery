@@ -32,6 +32,29 @@ pub(crate) struct RedditListings {
 
 //TODO: imgur... gifv
 
+fn extract_imgur_gifv_url(url: &str) -> Option<String> {
+  use regex::Regex;
+  lazy_static! {
+        static ref RE: Regex = Regex::new(r"/((\w+|\d+)).gifv").unwrap();
+  }
+  for cap in RE.captures_iter(url) {
+    return Some(cap[1].to_string());
+  }
+  return None;
+}
+
+fn extract_gfycat_gif_url(url: &str) -> Option<String> {
+  use regex::Regex;
+  lazy_static! {
+        static ref RE: Regex = Regex::new(r"^https?://thumbs\.gfycat\.com/(\w+|\d+)-(?:\w+|\d+|_)\.gif$").unwrap();
+  }
+  for cap in RE.captures_iter(url) {
+    return Some(cap[1].to_string());
+  }
+  return None;
+}
+
+
 impl RedditListings {
   pub(crate) fn get_items(self) -> Option<(Vec<RedditItem>, String)> {
     if let Some(data) = self.data {
@@ -42,6 +65,36 @@ impl RedditListings {
           after = child_data.name;
           if child.kind != "t3" {
             continue;
+          }
+
+          if child_data.url.contains("imgur") && child_data.url.ends_with(".gifv") {
+            if let Some(url) = extract_imgur_gifv_url(&child_data.url) {
+              items.push(RedditItem {
+                title: child_data.title.clone(),
+                title_url: format!("https://www.reddit.com/{}", &child_data.permalink),
+                item: RedditItemType::Video {
+                  mime: "video/mp4".to_string(),
+                  url: format!("https://i.imgur.com/{}.mp4", url),
+                },
+              });
+              continue;
+            }
+          }
+
+          if let Some(RedditMedia { type_: Some(type_), oembed: Some(OEmbed { thumbnail_url: Some(thumbnail_url) }) }) = &child_data.media {
+            if type_ == "gfycat.com" {
+              if let Some(url) = extract_gfycat_gif_url(thumbnail_url) {
+                items.push(RedditItem {
+                  title: child_data.title.clone(),
+                  title_url: format!("https://www.reddit.com/{}", &child_data.permalink),
+                  item: RedditItemType::Video {
+                    mime: "video/mp4".to_string(),
+                    url: format!("https://giant.gfycat.com/{}.mp4", url),
+                  },
+                });
+                continue;
+              }
+            }
           }
 
           if let Some(media_embed) = &child_data.secure_media_embed {
@@ -148,7 +201,21 @@ pub(crate) struct RedditListingItemData {
   title: String,
   permalink: String,
   name: String,
+  url: String,
   secure_media_embed: Option<RedditMediaEmbed>,
+  media: Option<RedditMedia>,
+}
+
+#[derive(Deserialize, Debug)]
+pub(crate) struct RedditMedia {
+  #[serde(rename = "type")]
+  type_: Option<String>,
+  oembed: Option<OEmbed>,
+}
+
+#[derive(Deserialize, Debug)]
+pub(crate) struct OEmbed {
+  thumbnail_url: Option<String>
 }
 
 #[derive(Deserialize, Debug)]
