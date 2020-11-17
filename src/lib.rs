@@ -1,6 +1,7 @@
 #![recursion_limit = "1024"]
 
-#[macro_use] extern crate lazy_static;
+#[macro_use]
+extern crate lazy_static;
 
 mod data;
 mod player;
@@ -15,7 +16,6 @@ use yew::format::{Nothing, Json};
 use anyhow::Error;
 use data::*;
 use player::Player;
-
 
 struct Model {
   link: ComponentLink<Self>,
@@ -91,6 +91,23 @@ impl Model {
       self.callback_items.emit(());
     }
   }
+
+  fn refresh_interval(&mut self) {
+    self.job.take();
+    if self.timeout_enable {
+      let handle = IntervalService::spawn(Duration::from_secs(self.timeout), self.callback_tick.clone());
+      self.job = Some(Box::new(handle));
+    }
+  }
+
+  fn check_bounds(&mut self) {
+    if self.current_index < 0 {
+      self.current_index = 0;
+    }
+    if self.current_index as usize >= self.items.len() {
+      self.current_index = self.items.len() as i32 - 1;
+    }
+  }
 }
 
 impl Component for Model {
@@ -120,39 +137,27 @@ impl Component for Model {
     }
   }
 
-
   fn update(&mut self, msg: Self::Message) -> ShouldRender {
     match msg {
       Msg::TimeoutToggle => {
         self.timeout_enable = !self.timeout_enable;
-        self.job.take();
-        if self.timeout_enable {
-          let handle = IntervalService::spawn(Duration::from_secs(self.timeout), self.callback_tick.clone());
-          self.job = Some(Box::new(handle));
-        }
+        self.refresh_interval();
       }
       Msg::TimeoutSet(data) => {
         if let ChangeData::Value(timeout_str) = data {
           if let Ok(timeout) = timeout_str.parse::<u64>() {
             if timeout != self.timeout && timeout > 0 {
               self.timeout = timeout;
-              self.job.take();
-              let handle = IntervalService::spawn(Duration::from_secs(self.timeout), self.callback_tick.clone());
-              self.job = Some(Box::new(handle));
+              self.refresh_interval();
             }
           }
         }
       }
       Msg::NextPicture => {
         self.current_index += 1;
-        if self.current_index as usize >= self.items.len() {
-          self.current_index = self.items.len() as i32 - 1;
-        }
+        self.check_bounds();
         self.check_next_load();
-
-        self.job.take();
-        let handle = IntervalService::spawn(Duration::from_secs(self.timeout), self.callback_tick.clone());
-        self.job = Some(Box::new(handle));
+        self.refresh_interval();
       }
       Msg::PrevPicture => {
         self.current_index -= 1;
@@ -160,34 +165,20 @@ impl Component for Model {
           self.current_index = 0;
         }
         self.check_next_load();
-
-        self.job.take();
-        let handle = IntervalService::spawn(Duration::from_secs(self.timeout), self.callback_tick.clone());
-        self.job = Some(Box::new(handle));
+        self.refresh_interval();
       }
       Msg::SetIndex(index) => {
         self.current_index = index;
-        if self.current_index < 0 {
-          self.current_index = 0;
-        }
-        if self.current_index as usize >= self.items.len() {
-          self.current_index = self.items.len() as i32 - 1;
-        }
+        self.check_bounds();
         self.check_next_load();
-
-        self.job.take();
-        let handle = IntervalService::spawn(Duration::from_secs(self.timeout), self.callback_tick.clone());
-        self.job = Some(Box::new(handle));
+        self.refresh_interval();
       }
       Msg::Tick => {
         if !self.timeout_enable {
           return false;
         }
-
         self.current_index += 1;
-        if self.current_index as usize >= self.items.len() {
-          self.current_index = self.items.len() as i32 - 1;
-        }
+        self.check_bounds();
         self.check_next_load();
       }
       Msg::ItemsLoaded((pictures, after)) => {
